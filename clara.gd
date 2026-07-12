@@ -24,6 +24,7 @@ var skill_cooldown = 0.0 # Timer for skill attack
 
 var target_player = null
 var current_enemy = null
+var los_raycast: RayCast2D
 
 var stuck_timer = 0.0 # Tracks how long Clara has been barely moving
 
@@ -41,6 +42,16 @@ func _ready():
 		nav_agent.path_postprocessing = NavigationPathQueryParameters2D.PATH_POSTPROCESSING_EDGECENTERED
 		
 	target_player = get_tree().get_first_node_in_group("player")
+	
+	# Dynamically add RayCast2D for LOS checks
+	los_raycast = get_node_or_null("RayCast2D")
+	if not los_raycast:
+		los_raycast = RayCast2D.new()
+		los_raycast.name = "RayCast2D"
+		los_raycast.add_exception(self)
+		if target_player:
+			los_raycast.add_exception(target_player)
+		add_child(los_raycast)
 	
 	# Clara and Player can permanently pass through each other
 	if target_player:
@@ -150,7 +161,7 @@ func _physics_process(delta):
 	var is_too_far = false
 	if target_player:
 		dist_to_player = global_position.distance_to(target_player.global_position)
-		if dist_to_player > 250.0: # If player leaves her too far behind, she will panic and return
+		if dist_to_player > 130.0: # Tight leash: If player runs 130px away, drop aggro and follow
 			is_too_far = true
 
 	# 1. Find the nearest enemy
@@ -292,20 +303,23 @@ func _flip_sprite(dir_x):
 func find_nearest_enemy():
 	current_enemy = null
 	
-	# Fallback if ScanArea hasn't been created yet
-	if not has_node("ScanArea"):
+	if not has_node("ScanArea") or not los_raycast:
 		return
 		
-	# Only scan enemies that are currently overlapping our sensor sphere
 	var enemies = $ScanArea.get_overlapping_bodies()
 	var nearest_dist = INF 
 	
 	for enemy in enemies:
 		if enemy.is_in_group("enemy") and is_instance_valid(enemy) and not enemy.get("is_dead"):
-			var dist = global_position.distance_to(enemy.global_position)
-			if dist < nearest_dist:
-				nearest_dist = dist
-				current_enemy = enemy
+			# LOS Check: Ensure Clara can actually see the enemy (no walls in between)
+			los_raycast.target_position = enemy.global_position - global_position
+			los_raycast.force_raycast_update()
+			
+			if los_raycast.is_colliding() and los_raycast.get_collider() == enemy:
+				var dist = global_position.distance_to(enemy.global_position)
+				if dist < nearest_dist:
+					nearest_dist = dist
+					current_enemy = enemy
 
 func take_damage(amount: int, knockback_dir: Vector2 = Vector2.ZERO):
 	if is_dead: return
